@@ -1,0 +1,231 @@
+// Simple in-memory "database" of users and tasks stored in localStorage
+// User schema: {username, password}
+// Task schema: {id, title, desc, dueDate, assignee, status}
+
+const authSection = document.getElementById('auth-section');
+const taskSection = document.getElementById('task-section');
+const authForm = document.getElementById('auth-form');
+const taskForm = document.getElementById('task-form');
+const tasksList = document.getElementById('tasks-list');
+const displayUsername = document.getElementById('display-username');
+const signupBtn = document.getElementById('signup-btn');
+const loginBtn = document.getElementById('login-btn');
+const authMessage = document.getElementById('auth-message');
+const logoutBtn = document.getElementById('logout-btn');
+const filterStatus = document.getElementById('filter-status');
+const taskAssigneeSelect = document.getElementById('task-assignee');
+
+let mode = 'signup'; // or 'login'
+let currentUser = null;
+
+// Helpers for localStorage
+function getUsers() {
+  return JSON.parse(localStorage.getItem('users') || '[]');
+}
+
+function saveUsers(users) {
+  localStorage.setItem('users', JSON.stringify(users));
+}
+
+function getTasks() {
+  return JSON.parse(localStorage.getItem('tasks') || '[]');
+}
+
+function saveTasks(tasks) {
+  localStorage.setItem('tasks', JSON.stringify(tasks));
+}
+
+function loadUsersToAssignee() {
+  taskAssigneeSelect.innerHTML = '';
+  const users = getUsers();
+  users.forEach(user => {
+    const opt = document.createElement('option');
+    opt.value = user.username;
+    opt.textContent = user.username;
+    taskAssigneeSelect.appendChild(opt);
+  });
+}
+
+// Switch auth mode
+signupBtn.addEventListener('click', () => {
+  mode = 'signup';
+  authMessage.textContent = '';
+  authForm.reset();
+});
+
+loginBtn.addEventListener('click', () => {
+  mode = 'login';
+  authMessage.textContent = '';
+  authForm.reset();
+});
+
+// Handle signup/login
+authForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const username = e.target.username.value.trim();
+  const password = e.target.password.value;
+
+  if (!username || !password) {
+    authMessage.textContent = 'Please provide username and password.';
+    return;
+  }
+
+  const users = getUsers();
+  const userExists = users.find(u => u.username === username);
+
+  if (mode === 'signup') {
+    if (userExists) {
+      authMessage.textContent = 'Username already exists.';
+    } else {
+      users.push({username, password});
+      saveUsers(users);
+      currentUser = username;
+      authMessage.textContent = 'Signup successful!';
+      showTaskSection();
+    }
+  } else { // login
+    if (!userExists || userExists.password !== password) {
+      authMessage.textContent = 'Invalid username or password.';
+    } else {
+      currentUser = username;
+      authMessage.textContent = 'Login successful!';
+      showTaskSection();
+    }
+  }
+});
+
+// Show task section and load tasks of the team
+function showTaskSection() {
+  authSection.classList.add('hidden');
+  taskSection.classList.remove('hidden');
+  displayUsername.textContent = currentUser;
+  loadUsersToAssignee();
+  renderTasks();
+}
+
+// Logout
+logoutBtn.addEventListener('click', () => {
+  currentUser = null;
+  authSection.classList.remove('hidden');
+  taskSection.classList.add('hidden');
+  authMessage.textContent = '';
+  authForm.reset();
+  tasksList.innerHTML = '';
+});
+
+// Add new task
+taskForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const title = e.target['task-title'].value.trim();
+  const desc = e.target['task-desc'].value.trim();
+  const dueDate = e.target['task-due'].value;
+  const assignee = e.target['task-assignee'].value;
+  if (!title || !desc || !dueDate || !assignee) return;
+
+  const tasks = getTasks();
+  const newTask = {
+    id: Date.now(),
+    title,
+    desc,
+    dueDate,
+    assignee,
+    status: 'pending' // default status
+  };
+
+  tasks.push(newTask);
+  saveTasks(tasks);
+  taskForm.reset();
+  renderTasks();
+});
+
+// Render task list based on filter
+function renderTasks() {
+  const filter = filterStatus.value;
+  const tasks = getTasks();
+  tasksList.innerHTML = '';
+
+  // Filtered and sorted tasks by due date (ascending)
+  const filteredTasks = tasks
+    .filter(t => (filter === 'all' ? true : t.status === filter))
+    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+
+  filteredTasks.forEach(task => {
+    const taskDiv = document.createElement('div');
+    taskDiv.className = 'task-item';
+
+    // Format due date
+    const dueDateFormatted = new Date(task.dueDate).toLocaleDateString();
+
+    taskDiv.innerHTML = `
+      <div class="task-header">
+        <div>
+          <span class="task-title">${task.title}</span> 
+          (Assigned to: <strong>${task.assignee}</strong>)
+        </div>
+        <div class="task-status">
+          Status: 
+          <select data-id="${task.id}">
+            <option value="pending">Pending</option>
+            <option value="in-progress">In Progress</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+      </div>
+      <p>${task.desc}</p>
+      <p><small>Due: ${dueDateFormatted}</small></p>
+      <div class="task-actions">
+        <button data-id="${task.id}" class="delete-btn">Delete</button>
+      </div>
+    `;
+
+    const statusSelect = taskDiv.querySelector('select');
+    statusSelect.value = task.status;
+
+    // Status change handler
+    statusSelect.addEventListener('change', (e) => {
+      const id = Number(e.target.getAttribute('data-id'));
+      const updatedStatus = e.target.value;
+      updateTaskStatus(id, updatedStatus);
+    });
+
+    // Delete button handler
+    const deleteBtn = taskDiv.querySelector('.delete-btn');
+    deleteBtn.addEventListener('click', () => {
+      deleteTask(task.id);
+    });
+
+    // Highlight tasks with approaching deadline
+    const today = new Date();
+    const due = new Date(task.dueDate);
+    const diffDays = Math.ceil((due - today) / (1000*60*60*24));
+    if(diffDays <= 2 && task.status !== 'completed') {
+      taskDiv.style.borderColor = 'red';
+      taskDiv.style.backgroundColor = '#ffe6e6';
+    }
+
+    tasksList.appendChild(taskDiv);
+  });
+}
+
+// Update task status
+function updateTaskStatus(id, status) {
+  const tasks = getTasks();
+  const taskIndex = tasks.findIndex(t => t.id === id);
+  if (taskIndex > -1) {
+    tasks[taskIndex].status = status;
+    saveTasks(tasks);
+    renderTasks();
+  }
+}
+
+// Delete a task
+function deleteTask(id) {
+  let tasks = getTasks();
+  tasks = tasks.filter(t => t.id !== id);
+  saveTasks(tasks);
+  renderTasks();
+}
+
+// Filter change event
+filterStatus.addEventListener('change', renderTasks);
+
